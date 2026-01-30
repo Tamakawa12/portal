@@ -7,27 +7,19 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, onSnapshot, serverTimestamp, updateDoc, arrayUnion, arrayRemove } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Firebase Configuration
-        const firebaseConfig = {
-
-  apiKey: "AIzaSyDtpzJ0K5TU44DaUtBlkar7uQtrJCOhcSY",
-
-  authDomain: "zenpukuji-kitchen.firebaseapp.com",
-
-  projectId: "zenpukuji-kitchen",
-
-  storageBucket: "zenpukuji-kitchen.firebasestorage.app",
-
-  messagingSenderId: "252643494401",
-
-  appId: "1:252643494401:web:e968046d08590d7bde4e00",
-
-  measurementId: "G-QEPSDSKBQY"
-
-};
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
+            apiKey: "AIzaSyDtpzJ0K5TU44DaUtBlkar7uQtrJCOhcSY",
+            authDomain: "zenpukuji-kitchen.firebaseapp.com",
+            projectId: "zenpukuji-kitchen",
+            storageBucket: "zenpukuji-kitchen.firebasestorage.app",
+            messagingSenderId: "252643494401",
+            appId: "1:252643494401:web:e968046d08590d7bde4e00",
+            measurementId: "G-QEPSDSKBQY"
+        };
 
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
@@ -37,7 +29,7 @@
         let currentUser = null;
         let tapCount = 0;
         
-        // FIX: Added 'current' as the 6th segment to ensure an even number of segments for a document reference
+        // Finalized 6-segment path for Firestore document reference
         const statusDoc = doc(db, 'artifacts', appId, 'public', 'data', 'status_v6', 'current');
 
         const dailyRecipes = [
@@ -52,13 +44,15 @@
 
         async function initAuth() {
             try {
-                // Ensure auth is initialized first
                 if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                     await signInWithCustomToken(auth, __initial_auth_token);
                 } else {
                     await signInAnonymously(auth);
                 }
-            } catch (error) { console.error("Auth error:", error); }
+                console.log("Authentication successful.");
+            } catch (error) { 
+                console.error("Auth error:", error);
+            }
         }
 
         onAuthStateChanged(auth, (user) => {
@@ -66,12 +60,15 @@
                 currentUser = user;
                 updatePresence();
                 listenForStatus();
+            } else {
+                currentUser = null;
             }
         });
 
         async function updatePresence() {
             if (!currentUser) return;
             try {
+                // Using setDoc with merge: true to ensure document creation
                 await setDoc(statusDoc, { last_active: serverTimestamp() }, { merge: true });
             } catch (e) { console.error("Update presence error:", e); }
         }
@@ -85,7 +82,9 @@
                     renderGroceryList(data.grocery_list || []);
                     renderMessageLog(data.messages || []);
                 }
-            }, (err) => console.error("Snapshot error:", err));
+            }, (err) => {
+                console.error("Snapshot error - Check Firebase rules:", err);
+            });
         }
 
         function updateAdminUI(data) {
@@ -127,12 +126,12 @@
             if (!text || !currentUser) return;
             
             try {
-                await updateDoc(statusDoc, {
+                // Use setDoc with merge to be safe
+                await setDoc(statusDoc, {
                     messages: arrayUnion({ text, time: new Date().toISOString() }),
                     last_active: serverTimestamp()
-                });
+                }, { merge: true });
 
-                // UI feedback & Vanish
                 input.value = '';
                 document.getElementById('review-form').classList.add('hidden');
                 document.getElementById('review-success').classList.remove('hidden');
@@ -148,7 +147,10 @@
             const val = input.value.trim();
             if (!val || !currentUser) return;
             try {
-                await updateDoc(statusDoc, { grocery_list: arrayUnion(val), last_active: serverTimestamp() });
+                await setDoc(statusDoc, { 
+                    grocery_list: arrayUnion(val), 
+                    last_active: serverTimestamp() 
+                }, { merge: true });
                 input.value = '';
             } catch (e) { console.error("Add grocery error:", e); }
         };
@@ -156,14 +158,20 @@
         window.removeItem = async (item) => {
             if (!currentUser) return;
             try {
-                await updateDoc(statusDoc, { grocery_list: arrayRemove(item), last_active: serverTimestamp() });
+                await setDoc(statusDoc, { 
+                    grocery_list: arrayRemove(item), 
+                    last_active: serverTimestamp() 
+                }, { merge: true });
             } catch (e) { console.error("Remove grocery error:", e); }
         };
 
         window.toggleStatus = async (status) => {
             if (!currentUser) return;
             try {
-                await updateDoc(statusDoc, { is_busy: status, last_active: serverTimestamp() });
+                await setDoc(statusDoc, { 
+                    is_busy: status, 
+                    last_active: serverTimestamp() 
+                }, { merge: true });
             } catch (e) { console.error("Toggle status error:", e); }
         };
 
@@ -176,8 +184,10 @@
             setTimeout(() => { if(tapCount > 0) tapCount = 0; }, 3000);
         };
 
-        window.onload = () => {
-            initAuth();
+        window.onload = async () => {
+            // Wait for authentication before doing anything else
+            await initAuth();
+            
             const now = new Date();
             document.getElementById('today-date').innerText = now.toLocaleDateString('ja-JP', { month: 'long', day: 'numeric', weekday: 'short' });
             const r = dailyRecipes[now.getDay()];
