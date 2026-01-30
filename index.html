@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>デイリーキッチン & お天気</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot, serverTimestamp, updateDoc, arrayUnion, arrayRemove } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Firebase Configuration
+        const firebaseConfig = {
+
+  apiKey: "AIzaSyDtpzJ0K5TU44DaUtBlkar7uQtrJCOhcSY",
+
+  authDomain: "zenpukuji-kitchen.firebaseapp.com",
+
+  projectId: "zenpukuji-kitchen",
+
+  storageBucket: "zenpukuji-kitchen.firebasestorage.app",
+
+  messagingSenderId: "252643494401",
+
+  appId: "1:252643494401:web:e968046d08590d7bde4e00",
+
+  measurementId: "G-QEPSDSKBQY"
+
+};
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'clandestine-beacon-v6';
+
+        let currentUser = null;
+        let tapCount = 0;
+        
+        // FIX: Added 'current' as the 6th segment to ensure an even number of segments for a document reference
+        const statusDoc = doc(db, 'artifacts', appId, 'public', 'data', 'status_v6', 'current');
+
+        const dailyRecipes = [
+            { id: 'r1', name: "春キャベツの浅漬け", desc: "旬の野菜を使った、さっぱりとした副菜です。", img: "https://images.unsplash.com/photo-1547592166-23ac45744acd?auto=format&fit=crop&w=800" },
+            { id: 'r2', name: "鮭のムニエル タルタル添え", desc: "子供も喜ぶ、定番の魚料理レシピ。", img: "https://images.unsplash.com/photo-1519708227418-c8fd9a32b7a2?auto=format&fit=crop&w=800" },
+            { id: 'r3', name: "具だくさん豚汁", desc: "これ一杯で栄養満点。寒い日にぴったりの汁物。", img: "https://images.unsplash.com/photo-1547592115-8132e01869e5?auto=format&fit=crop&w=800" },
+            { id: 'r4', name: "鶏むね肉の照り焼き", desc: "ヘルシーで経済的。お弁当のおかずにも最適。", img: "https://images.unsplash.com/photo-1532550907401-a500c9a57435?auto=format&fit=crop&w=800" },
+            { id: 'r5', name: "茄子と挽肉のボロネーゼ", desc: "本格的な味をおうちで。週末のランチに。", img: "https://images.unsplash.com/photo-1551183053-bf91a1d81141?auto=format&fit=crop&w=800" },
+            { id: 'r6', name: "ほうれん草の胡麻和え", desc: "あと一品欲しい時の、5分でできる鉄板メニュー。", img: "https://images.unsplash.com/photo-1512621776951-a57141f2eefd?auto=format&fit=crop&w=800" },
+            { id: 'r7', name: "豆腐ハンバーグ", desc: "ふんわり食感。大根おろしとポン酢でさっぱりと。", img: "https://images.unsplash.com/photo-1547592166-23ac45744acd?auto=format&fit=crop&w=800" }
+        ];
+
+        async function initAuth() {
+            try {
+                // Ensure auth is initialized first
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (error) { console.error("Auth error:", error); }
+        }
+
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                currentUser = user;
+                updatePresence();
+                listenForStatus();
+            }
+        });
+
+        async function updatePresence() {
+            if (!currentUser) return;
+            try {
+                await setDoc(statusDoc, { last_active: serverTimestamp() }, { merge: true });
+            } catch (e) { console.error("Update presence error:", e); }
+        }
+
+        function listenForStatus() {
+            if (!currentUser) return;
+            onSnapshot(statusDoc, (snapshot) => {
+                if (snapshot.exists()) {
+                    const data = snapshot.data();
+                    updateAdminUI(data);
+                    renderGroceryList(data.grocery_list || []);
+                    renderMessageLog(data.messages || []);
+                }
+            }, (err) => console.error("Snapshot error:", err));
+        }
+
+        function updateAdminUI(data) {
+            const lastActive = data.last_active?.toDate();
+            document.getElementById('last-ping').innerText = lastActive ? lastActive.toLocaleTimeString('ja-JP') : '--:--';
+            document.getElementById('status-indicator').className = data.is_busy ? "h-2 w-2 rounded-full bg-red-500" : "h-2 w-2 rounded-full bg-green-500";
+            document.getElementById('status-text').innerText = data.is_busy ? "接見不可" : "自由";
+        }
+
+        function renderGroceryList(list) {
+            const container = document.getElementById('grocery-items');
+            if (list.length === 0) {
+                container.innerHTML = `<p class="text-[10px] text-stone-400 py-2">メモはありません</p>`;
+                return;
+            }
+            container.innerHTML = list.map(item => `
+                <div class="flex items-center justify-between py-1.5 border-b border-stone-50">
+                    <div class="flex items-center space-x-2">
+                        <input type="checkbox" onchange="removeItem('${item}')" class="h-3 w-3 rounded border-stone-300 text-orange-500">
+                        <span class="text-xs text-stone-700">${item}</span>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function renderMessageLog(msgs) {
+            const container = document.getElementById('message-log');
+            container.innerHTML = msgs.slice(-10).reverse().map(m => `
+                <div class="text-[10px] border-b border-stone-800 py-1">
+                    <p class="text-stone-500 mb-0.5">${new Date(m.time).toLocaleString('ja-JP')}</p>
+                    <p class="text-white">${m.text}</p>
+                </div>
+            `).join('');
+        }
+
+        window.submitSecretMessage = async () => {
+            const input = document.getElementById('review-input');
+            const text = input.value.trim();
+            if (!text || !currentUser) return;
+            
+            try {
+                await updateDoc(statusDoc, {
+                    messages: arrayUnion({ text, time: new Date().toISOString() }),
+                    last_active: serverTimestamp()
+                });
+
+                // UI feedback & Vanish
+                input.value = '';
+                document.getElementById('review-form').classList.add('hidden');
+                document.getElementById('review-success').classList.remove('hidden');
+                setTimeout(() => {
+                    document.getElementById('review-success').classList.add('hidden');
+                    document.getElementById('review-prompt').classList.remove('hidden');
+                }, 3000);
+            } catch (e) { console.error("Message submit error:", e); }
+        };
+
+        window.addGroceryItem = async () => {
+            const input = document.getElementById('grocery-input');
+            const val = input.value.trim();
+            if (!val || !currentUser) return;
+            try {
+                await updateDoc(statusDoc, { grocery_list: arrayUnion(val), last_active: serverTimestamp() });
+                input.value = '';
+            } catch (e) { console.error("Add grocery error:", e); }
+        };
+
+        window.removeItem = async (item) => {
+            if (!currentUser) return;
+            try {
+                await updateDoc(statusDoc, { grocery_list: arrayRemove(item), last_active: serverTimestamp() });
+            } catch (e) { console.error("Remove grocery error:", e); }
+        };
+
+        window.toggleStatus = async (status) => {
+            if (!currentUser) return;
+            try {
+                await updateDoc(statusDoc, { is_busy: status, last_active: serverTimestamp() });
+            } catch (e) { console.error("Toggle status error:", e); }
+        };
+
+        window.handleLogoTap = () => {
+            tapCount++;
+            if (tapCount >= 5) {
+                document.getElementById('admin-panel').classList.toggle('hidden');
+                tapCount = 0;
+            }
+            setTimeout(() => { if(tapCount > 0) tapCount = 0; }, 3000);
+        };
+
+        window.onload = () => {
+            initAuth();
+            const now = new Date();
+            document.getElementById('today-date').innerText = now.toLocaleDateString('ja-JP', { month: 'long', day: 'numeric', weekday: 'short' });
+            const r = dailyRecipes[now.getDay()];
+            document.getElementById('r-name').innerText = r.name;
+            document.getElementById('r-img').src = r.img;
+        };
+    </script>
+</head>
+<body class="bg-stone-50 text-stone-800 font-sans select-none antialiased">
+
+    <header class="bg-white/95 backdrop-blur-sm border-b border-stone-200 p-4 flex justify-between items-center sticky top-0 z-50">
+        <div onclick="handleLogoTap()" class="flex items-center space-x-2">
+            <div id="main-logo" class="bg-orange-500 p-1.5 rounded-xl shadow-sm">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+                </svg>
+            </div>
+            <h1 class="font-black text-lg tracking-tighter text-stone-900 uppercase">Daily Kitchen</h1>
+        </div>
+        <div id="today-date" class="text-[10px] font-bold text-stone-400 bg-stone-100 px-2 py-1 rounded-full">...</div>
+    </header>
+
+    <main class="max-w-md mx-auto p-4 space-y-6">
+        
+        <!-- Weather -->
+        <section class="bg-indigo-700 rounded-3xl p-5 text-white shadow-lg relative overflow-hidden">
+            <div class="relative z-10">
+                <p class="text-[10px] font-bold opacity-70 mb-1">杉並区の天気</p>
+                <div class="flex items-baseline space-x-2">
+                    <h2 class="text-4xl font-black">9°C</h2>
+                    <span class="text-sm font-medium">曇り</span>
+                </div>
+            </div>
+            <div class="absolute -right-4 -top-4 opacity-10 text-8xl">☁️</div>
+        </section>
+
+        <!-- Hidden Admin Monitor -->
+        <section id="admin-panel" class="hidden bg-stone-950 text-white rounded-3xl p-5 shadow-2xl border border-stone-800">
+            <div class="flex justify-between items-center mb-6">
+                <div class="flex items-center space-x-2">
+                    <div id="status-indicator" class="h-2 w-2 rounded-full"></div>
+                    <h3 id="status-text" class="text-[10px] font-black uppercase tracking-widest text-stone-400">---</h3>
+                </div>
+                <div class="text-right">
+                    <p class="text-[8px] text-stone-600">Last Ping</p>
+                    <p id="last-ping" class="text-xs font-mono font-bold text-orange-400">--:--</p>
+                </div>
+            </div>
+
+            <div class="mb-6">
+                <h4 class="text-[9px] font-bold text-stone-700 uppercase mb-2 border-b border-stone-900 pb-1">メッセージログ (Secret Messages)</h4>
+                <div id="message-log" class="space-y-2 max-h-40 overflow-y-auto pr-1"></div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+                <button onclick="toggleStatus(false)" class="bg-stone-900 border border-stone-800 py-3 rounded-2xl text-[10px] font-bold">自由</button>
+                <button onclick="toggleStatus(true)" class="bg-stone-900 border border-stone-800 py-3 rounded-2xl text-[10px] font-bold">接見不可</button>
+            </div>
+        </section>
+
+        <!-- Grocery List -->
+        <section class="bg-white rounded-3xl p-5 shadow-sm border border-stone-100">
+            <h3 class="font-black text-[10px] text-stone-400 uppercase tracking-widest mb-3">買い物メモ</h3>
+            <div id="grocery-items" class="mb-3"></div>
+            <div class="flex space-x-2">
+                <input id="grocery-input" type="text" placeholder="品目を追加..." class="flex-grow bg-stone-50 border-none rounded-xl px-3 py-2 text-xs">
+                <button onclick="addGroceryItem()" class="bg-orange-500 text-white p-2 rounded-xl">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" /></svg>
+                </button>
+            </div>
+        </section>
+
+        <!-- Recipe & Review (The Stealth Channel) -->
+        <section class="space-y-4">
+            <h3 class="font-black text-[10px] text-stone-400 uppercase tracking-widest px-1">今日のおすすめ</h3>
+            <div class="bg-white rounded-3xl overflow-hidden shadow-sm border border-stone-100">
+                <div class="h-48 bg-stone-200">
+                    <img id="r-img" class="w-full h-full object-cover">
+                </div>
+                <div class="p-5">
+                    <h4 id="r-name" class="font-bold text-stone-900 text-lg">---</h4>
+                    <p class="text-xs text-stone-500 mt-1 mb-4">このレシピをお試しになりましたか？感想をお聞かせください。</p>
+                    
+                    <!-- Review Mechanism -->
+                    <div id="review-section" class="bg-stone-50 rounded-2xl p-4">
+                        <div id="review-prompt">
+                            <button onclick="document.getElementById('review-prompt').classList.add('hidden'); document.getElementById('review-form').classList.remove('hidden');" class="w-full py-2 border-2 border-dashed border-stone-200 rounded-xl text-xs text-stone-400 font-bold">
+                                レビューを投稿する
+                            </button>
+                        </div>
+                        
+                        <div id="review-form" class="hidden space-y-3">
+                            <textarea id="review-input" placeholder="味や作りやすさについて..." class="w-full bg-white border-none rounded-xl p-3 text-xs focus:ring-1 focus:ring-orange-200 h-20 resize-none"></textarea>
+                            <button onclick="submitSecretMessage()" class="w-full bg-stone-900 text-white py-2 rounded-xl text-xs font-bold">送信する</button>
+                        </div>
+
+                        <div id="review-success" class="hidden py-2 text-center">
+                            <p class="text-xs text-green-600 font-bold">フィードバックありがとうございます！</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+</body>
+</html>
