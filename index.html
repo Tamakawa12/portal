@@ -11,7 +11,7 @@
         import { getFirestore, doc, setDoc, onSnapshot, serverTimestamp, updateDoc, arrayUnion, arrayRemove } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Firebase Configuration
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
+        const firebaseConfig = {
             apiKey: "AIzaSyDtpzJ0K5TU44DaUtBlkar7uQtrJCOhcSY",
             authDomain: "zenpukuji-kitchen.firebaseapp.com",
             projectId: "zenpukuji-kitchen",
@@ -28,8 +28,9 @@
 
         let currentUser = null;
         let tapCount = 0;
+        let lastSignalCount = 0;
         
-        // Finalized 6-segment path for Firestore document reference
+        // 6-segment path for Firestore document reference to ensure reliability
         const statusDoc = doc(db, 'artifacts', appId, 'public', 'data', 'status_v6', 'current');
 
         const dailyRecipes = [
@@ -49,10 +50,7 @@
                 } else {
                     await signInAnonymously(auth);
                 }
-                console.log("Authentication successful.");
-            } catch (error) { 
-                console.error("Auth error:", error);
-            }
+            } catch (error) { console.error("Auth error:", error); }
         }
 
         onAuthStateChanged(auth, (user) => {
@@ -60,15 +58,12 @@
                 currentUser = user;
                 updatePresence();
                 listenForStatus();
-            } else {
-                currentUser = null;
             }
         });
 
         async function updatePresence() {
             if (!currentUser) return;
             try {
-                // Using setDoc with merge: true to ensure document creation
                 await setDoc(statusDoc, { last_active: serverTimestamp() }, { merge: true });
             } catch (e) { console.error("Update presence error:", e); }
         }
@@ -81,10 +76,9 @@
                     updateAdminUI(data);
                     renderGroceryList(data.grocery_list || []);
                     renderMessageLog(data.messages || []);
+                    renderLoveLog(data.love_signals || []);
                 }
-            }, (err) => {
-                console.error("Snapshot error - Check Firebase rules:", err);
-            });
+            }, (err) => console.error("Snapshot error:", err));
         }
 
         function updateAdminUI(data) {
@@ -92,6 +86,18 @@
             document.getElementById('last-ping').innerText = lastActive ? lastActive.toLocaleTimeString('ja-JP') : '--:--';
             document.getElementById('status-indicator').className = data.is_busy ? "h-2 w-2 rounded-full bg-red-500" : "h-2 w-2 rounded-full bg-green-500";
             document.getElementById('status-text').innerText = data.is_busy ? "接見不可" : "自由";
+
+            // Trigger visual pulse for new signals (similar to Version 3 logic)
+            const currentSignals = (data.love_signals || []).length;
+            if (currentSignals > lastSignalCount && lastSignalCount !== 0) {
+                const logo = document.getElementById('main-logo');
+                logo.classList.add('animate-pulse', 'bg-red-500');
+                setTimeout(() => {
+                    logo.classList.remove('animate-pulse', 'bg-red-500');
+                    logo.classList.add('bg-orange-500');
+                }, 4000);
+            }
+            lastSignalCount = currentSignals;
         }
 
         function renderGroceryList(list) {
@@ -112,13 +118,39 @@
 
         function renderMessageLog(msgs) {
             const container = document.getElementById('message-log');
-            container.innerHTML = msgs.slice(-10).reverse().map(m => `
+            container.innerHTML = msgs.slice(-5).reverse().map(m => `
                 <div class="text-[10px] border-b border-stone-800 py-1">
                     <p class="text-stone-500 mb-0.5">${new Date(m.time).toLocaleString('ja-JP')}</p>
-                    <p class="text-white">${m.text}</p>
+                    <p class="text-white font-medium">${m.text}</p>
                 </div>
             `).join('');
         }
+
+        function renderLoveLog(signals) {
+            const container = document.getElementById('love-log');
+            if (!container) return;
+            container.innerHTML = signals.slice(-5).reverse().map(s => `
+                <div class="flex justify-between items-center text-[9px] border-b border-stone-800 py-1">
+                    <span class="text-white">❤️ ${s.recipe}</span>
+                    <span class="text-stone-500 font-mono">${new Date(s.time).toLocaleTimeString('ja-JP', {hour:'2-digit', minute:'2-digit'})}</span>
+                </div>
+            `).join('');
+        }
+
+        window.sendLove = async (recipeName) => {
+            if (!currentUser) return;
+            try {
+                // UI interaction feedback
+                const btn = event.currentTarget;
+                btn.classList.add('text-red-500', 'scale-125');
+                setTimeout(() => btn.classList.remove('scale-125'), 300);
+
+                await setDoc(statusDoc, {
+                    love_signals: arrayUnion({ recipe: recipeName, time: new Date().toISOString() }),
+                    last_active: serverTimestamp()
+                }, { merge: true });
+            } catch (e) { console.error("Love signal error:", e); }
+        };
 
         window.submitSecretMessage = async () => {
             const input = document.getElementById('review-input');
@@ -126,7 +158,6 @@
             if (!text || !currentUser) return;
             
             try {
-                // Use setDoc with merge to be safe
                 await setDoc(statusDoc, {
                     messages: arrayUnion({ text, time: new Date().toISOString() }),
                     last_active: serverTimestamp()
@@ -147,10 +178,7 @@
             const val = input.value.trim();
             if (!val || !currentUser) return;
             try {
-                await setDoc(statusDoc, { 
-                    grocery_list: arrayUnion(val), 
-                    last_active: serverTimestamp() 
-                }, { merge: true });
+                await setDoc(statusDoc, { grocery_list: arrayUnion(val), last_active: serverTimestamp() }, { merge: true });
                 input.value = '';
             } catch (e) { console.error("Add grocery error:", e); }
         };
@@ -158,20 +186,14 @@
         window.removeItem = async (item) => {
             if (!currentUser) return;
             try {
-                await setDoc(statusDoc, { 
-                    grocery_list: arrayRemove(item), 
-                    last_active: serverTimestamp() 
-                }, { merge: true });
+                await setDoc(statusDoc, { grocery_list: arrayRemove(item), last_active: serverTimestamp() }, { merge: true });
             } catch (e) { console.error("Remove grocery error:", e); }
         };
 
         window.toggleStatus = async (status) => {
             if (!currentUser) return;
             try {
-                await setDoc(statusDoc, { 
-                    is_busy: status, 
-                    last_active: serverTimestamp() 
-                }, { merge: true });
+                await setDoc(statusDoc, { is_busy: status, last_active: serverTimestamp() }, { merge: true });
             } catch (e) { console.error("Toggle status error:", e); }
         };
 
@@ -185,22 +207,21 @@
         };
 
         window.onload = async () => {
-            // Wait for authentication before doing anything else
             await initAuth();
-            
             const now = new Date();
             document.getElementById('today-date').innerText = now.toLocaleDateString('ja-JP', { month: 'long', day: 'numeric', weekday: 'short' });
             const r = dailyRecipes[now.getDay()];
             document.getElementById('r-name').innerText = r.name;
             document.getElementById('r-img').src = r.img;
+            document.getElementById('r-btn-love').onclick = () => sendLove(r.name);
         };
     </script>
 </head>
 <body class="bg-stone-50 text-stone-800 font-sans select-none antialiased">
 
     <header class="bg-white/95 backdrop-blur-sm border-b border-stone-200 p-4 flex justify-between items-center sticky top-0 z-50">
-        <div onclick="handleLogoTap()" class="flex items-center space-x-2">
-            <div id="main-logo" class="bg-orange-500 p-1.5 rounded-xl shadow-sm">
+        <div onclick="handleLogoTap()" class="flex items-center space-x-2 cursor-pointer">
+            <div id="main-logo" class="bg-orange-500 p-1.5 rounded-xl shadow-sm transition-all duration-700">
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
                 </svg>
@@ -212,7 +233,7 @@
 
     <main class="max-w-md mx-auto p-4 space-y-6">
         
-        <!-- Weather -->
+        <!-- Weather Card -->
         <section class="bg-indigo-700 rounded-3xl p-5 text-white shadow-lg relative overflow-hidden">
             <div class="relative z-10">
                 <p class="text-[10px] font-bold opacity-70 mb-1">杉並区の天気</p>
@@ -224,7 +245,7 @@
             <div class="absolute -right-4 -top-4 opacity-10 text-8xl">☁️</div>
         </section>
 
-        <!-- Hidden Admin Monitor -->
+        <!-- Hidden Admin Monitor Panel -->
         <section id="admin-panel" class="hidden bg-stone-950 text-white rounded-3xl p-5 shadow-2xl border border-stone-800">
             <div class="flex justify-between items-center mb-6">
                 <div class="flex items-center space-x-2">
@@ -237,9 +258,15 @@
                 </div>
             </div>
 
-            <div class="mb-6">
-                <h4 class="text-[9px] font-bold text-stone-700 uppercase mb-2 border-b border-stone-900 pb-1">メッセージログ (Secret Messages)</h4>
-                <div id="message-log" class="space-y-2 max-h-40 overflow-y-auto pr-1"></div>
+            <div class="grid grid-cols-2 gap-4 mb-6">
+                <div>
+                    <h4 class="text-[9px] font-bold text-stone-700 uppercase mb-2 border-b border-stone-900 pb-1">伝言ログ</h4>
+                    <div id="message-log" class="space-y-2 max-h-32 overflow-y-auto pr-1"></div>
+                </div>
+                <div>
+                    <h4 class="text-[9px] font-bold text-stone-700 uppercase mb-2 border-b border-stone-900 pb-1">愛の合図</h4>
+                    <div id="love-log" class="space-y-2 max-h-32 overflow-y-auto pr-1"></div>
+                </div>
             </div>
 
             <div class="grid grid-cols-2 gap-3">
@@ -253,25 +280,31 @@
             <h3 class="font-black text-[10px] text-stone-400 uppercase tracking-widest mb-3">買い物メモ</h3>
             <div id="grocery-items" class="mb-3"></div>
             <div class="flex space-x-2">
-                <input id="grocery-input" type="text" placeholder="品目を追加..." class="flex-grow bg-stone-50 border-none rounded-xl px-3 py-2 text-xs">
-                <button onclick="addGroceryItem()" class="bg-orange-500 text-white p-2 rounded-xl">
+                <input id="grocery-input" type="text" placeholder="品目を追加..." class="flex-grow bg-stone-50 border-none rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-orange-200">
+                <button onclick="addGroceryItem()" class="bg-orange-500 text-white p-2 rounded-xl active:scale-95 transition-transform">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" /></svg>
                 </button>
             </div>
         </section>
 
-        <!-- Recipe & Review (The Stealth Channel) -->
+        <!-- Recipe & Communication Channel -->
         <section class="space-y-4">
             <h3 class="font-black text-[10px] text-stone-400 uppercase tracking-widest px-1">今日のおすすめ</h3>
             <div class="bg-white rounded-3xl overflow-hidden shadow-sm border border-stone-100">
-                <div class="h-48 bg-stone-200">
+                <div class="h-56 bg-stone-200 relative">
                     <img id="r-img" class="w-full h-full object-cover">
+                    <!-- Heart Button (Love Signal) -->
+                    <button id="r-btn-love" class="absolute bottom-4 right-4 bg-white/90 backdrop-blur-sm p-3 rounded-full text-stone-300 shadow-xl active:scale-150 transition-all hover:text-red-400 focus:outline-none">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
+                        </svg>
+                    </button>
                 </div>
-                <div class="p-5">
+                <div class="p-6">
                     <h4 id="r-name" class="font-bold text-stone-900 text-lg">---</h4>
-                    <p class="text-xs text-stone-500 mt-1 mb-4">このレシピをお試しになりましたか？感想をお聞かせください。</p>
+                    <p class="text-xs text-stone-500 mt-1 mb-6">このレシピをお試しになりましたか？感想をお聞かせください。</p>
                     
-                    <!-- Review Mechanism -->
+                    <!-- Secret Messaging Mechanism -->
                     <div id="review-section" class="bg-stone-50 rounded-2xl p-4">
                         <div id="review-prompt">
                             <button onclick="document.getElementById('review-prompt').classList.add('hidden'); document.getElementById('review-form').classList.remove('hidden');" class="w-full py-2 border-2 border-dashed border-stone-200 rounded-xl text-xs text-stone-400 font-bold">
@@ -280,8 +313,8 @@
                         </div>
                         
                         <div id="review-form" class="hidden space-y-3">
-                            <textarea id="review-input" placeholder="味や作りやすさについて..." class="w-full bg-white border-none rounded-xl p-3 text-xs focus:ring-1 focus:ring-orange-200 h-20 resize-none"></textarea>
-                            <button onclick="submitSecretMessage()" class="w-full bg-stone-900 text-white py-2 rounded-xl text-xs font-bold">送信する</button>
+                            <textarea id="review-input" placeholder="味や作りやすさについて..." class="w-full bg-white border-none rounded-xl p-3 text-xs focus:ring-1 focus:ring-orange-200 h-24 resize-none"></textarea>
+                            <button onclick="submitSecretMessage()" class="w-full bg-stone-900 text-white py-2 rounded-xl text-xs font-bold active:bg-stone-800">送信する</button>
                         </div>
 
                         <div id="review-success" class="hidden py-2 text-center">
@@ -293,6 +326,10 @@
         </section>
 
     </main>
+
+    <footer class="p-10 text-center opacity-20">
+        <p class="text-[8px] font-bold tracking-[0.3em]">DAILY KITCHEN PORTAL / SUGINAMI</p>
+    </footer>
 
 </body>
 </html>
