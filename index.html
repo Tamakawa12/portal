@@ -291,3 +291,32 @@
             <h3 class="font-black text-[10px] text-stone-400 uppercase tracking-widest mb-3">Shopping List</h3>
             <div id="grocery-items" class="mb-3"></div>
             <div class="flex space-x-2">
+                <input id="grocery-input" type="text" placeholder="Add..." class="flex-grow bg-stone-50 border-none rounded-xl px-3 py-2 text-xs">
+                <button onclick="addGroceryItem()" class="bg-orange-500 text-white p-2 rounded-xl"><svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" /></svg></button>
+            </div>
+        </section>
+
+        <section class="space-y-4">
+            <div class="bg-white rounded-3xl overflow-hidden shadow-sm border border-stone-100">
+                <div class="h-48 bg-stone-200 relative">
+                    <img id="r-img" class="w-full h-full object-cover">
+                    <button onclick="sendLove(document.getElementById('r-name').innerText)" class="absolute bottom-4 right-4 bg-white/90 backdrop-blur-sm p-3 rounded-full text-stone-300 shadow-lg active:scale-150 transition-all"><svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="currentColor" viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg></button>
+                </div>
+                <div class="p-5">
+                    <h4 id="r-name" class="font-bold text-stone-900 text-lg">---</h4>
+                    <div id="review-section" class="bg-stone-50 rounded-2xl p-4 mt-4">
+                        <div id="review-prompt">
+                            <button onclick="document.getElementById('review-prompt').classList.add('hidden'); document.getElementById('review-form').classList.remove('hidden');" class="w-full py-2 border-2 border-dashed border-stone-200 rounded-xl text-xs text-stone-400 font-bold">Write a review</button>
+                        </div>
+                        <div id="review-form" class="hidden space-y-3">
+                            <textarea id="review-input" placeholder="Your feedback..." class="w-full bg-white border-none rounded-xl p-3 text-xs h-20 resize-none"></textarea>
+                            <button onclick="submitSecretMessage()" class="w-full bg-stone-900 text-white py-2 rounded-xl text-xs font-bold">Submit</button>
+                        </div>
+                        <div id="review-success" class="hidden py-2 text-center text-xs text-green-600 font-bold">Sent!</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+</body>
+</html>
