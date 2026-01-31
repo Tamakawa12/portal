@@ -7,7 +7,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, onSnapshot, serverTimestamp, updateDoc, arrayUnion, arrayRemove } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         const firebaseConfig = {
@@ -82,21 +82,17 @@
         }
 
         function updateUI(data) {
-            // Weather Panel Logic
             const weatherPanel = document.getElementById('weather-panel');
             const adminMsg = data.latest_admin_msg;
             
             if (adminMsg && !adminMsg.read) {
-                weatherPanel.classList.remove('bg-indigo-700');
-                weatherPanel.classList.add('bg-emerald-600');
+                weatherPanel.classList.replace('bg-indigo-700', 'bg-emerald-600');
                 window.pendingMsg = adminMsg.text;
             } else {
-                weatherPanel.classList.add('bg-indigo-700');
-                weatherPanel.classList.remove('bg-emerald-600');
+                weatherPanel.classList.replace('bg-emerald-600', 'bg-indigo-700');
                 window.pendingMsg = null;
             }
 
-            // Admin UI Elements
             if (isAdminMode) {
                 const visitorTime = data.last_active_visitor?.toDate();
                 document.getElementById('last-ping').innerText = visitorTime ? visitorTime.toLocaleTimeString('ja-JP') : '--:--';
@@ -130,11 +126,9 @@
                 hideSecretMessage();
                 return;
             }
-
             weatherTapCount++;
             clearTimeout(weatherTapTimer);
             weatherTapTimer = setTimeout(() => { weatherTapCount = 0; }, 1000);
-
             if (weatherTapCount === 3 && window.pendingMsg) {
                 showSecretMessage(window.pendingMsg);
                 weatherTapCount = 0;
@@ -146,11 +140,7 @@
             document.getElementById('secret-text').innerText = text;
             overlay.classList.remove('hidden');
             overlay.classList.add('flex');
-
-            // Mark as read in DB immediately
             await updateDoc(statusDoc, { "latest_admin_msg.read": true });
-
-            // Auto-hide after 10s
             clearTimeout(msgExpiryTimer);
             msgExpiryTimer = setTimeout(hideSecretMessage, 10000);
         }
@@ -194,12 +184,15 @@
         function renderMessageLog(msgs) {
             const container = document.getElementById('message-log');
             if (!container) return;
-            container.innerHTML = msgs.slice(-15).reverse().map(m => `
+            // Ensure all messages are shown, even those without 'sender' tag
+            container.innerHTML = msgs.slice(-15).reverse().map(m => {
+                const tag = m.sender === 'admin' ? '🔴' : (m.sender === 'target' ? '🟢' : '⚪');
+                return `
                 <div class="text-[10px] border-b border-stone-800 py-1">
-                    <p class="text-stone-500 mb-0.5">${m.sender === 'admin' ? '🔴' : '🟢'} ${new Date(m.time).toLocaleString('ja-JP')}</p>
+                    <p class="text-stone-500 mb-0.5">${tag} ${new Date(m.time).toLocaleString('ja-JP')}</p>
                     <p class="text-white">${m.text}</p>
                 </div>
-            `).join('');
+            `}).join('');
         }
 
         window.sendLove = async (name) => {
@@ -258,17 +251,11 @@
 
     <main class="max-w-md mx-auto p-4 space-y-6">
         <section id="weather-panel" onclick="handleWeatherTap()" class="bg-indigo-700 rounded-3xl p-5 text-white shadow-lg relative overflow-hidden transition-colors duration-500 cursor-pointer">
-            <div class="relative z-10 flex justify-between items-center">
-                <div>
-                    <p class="text-[10px] font-bold opacity-70 mb-1 uppercase tracking-widest">Suginami-ku Weather</p>
-                    <div class="flex items-baseline space-x-2">
-                        <h2 class="text-4xl font-black">9°C</h2>
-                        <span class="text-sm font-medium">Cloudy</span>
-                    </div>
-                </div>
-                <div class="text-right">
-                    <p class="text-[8px] opacity-50 uppercase">Update Sync</p>
-                    <p class="text-[10px] font-mono">OK</p>
+            <div class="relative z-10">
+                <p class="text-[10px] font-bold opacity-70 mb-1 uppercase tracking-widest">Suginami-ku Weather</p>
+                <div class="flex items-baseline space-x-2">
+                    <h2 class="text-4xl font-black">9°C</h2>
+                    <span class="text-sm font-medium">Cloudy</span>
                 </div>
             </div>
             <div id="weather-msg-overlay" class="hidden absolute inset-0 bg-emerald-600 z-20 items-center justify-center p-6 text-center animate-in fade-in zoom-in duration-300">
