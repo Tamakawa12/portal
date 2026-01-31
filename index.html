@@ -29,8 +29,10 @@
 
         let currentUser = null;
         let tapCount = 0;
+        let weatherTapCount = 0;
+        let weatherTapTimer = null;
+        let msgExpiryTimer = null;
         
-        // Use URL parameter to signify Admin mode
         const urlParams = new URLSearchParams(window.location.search);
         const isAdminMode = urlParams.has('admin');
 
@@ -45,80 +47,96 @@
         ];
 
         async function initAuth() {
-            try {
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    await signInWithCustomToken(auth, __initial_auth_token);
-                } else {
-                    await signInAnonymously(auth);
-                }
-            } catch (error) { console.error("Auth error:", error); }
+            try { await signInAnonymously(auth); } catch (error) { console.error("Auth error:", error); }
         }
 
         onAuthStateChanged(auth, (user) => {
             if (user) {
                 currentUser = user;
-                updatePresence();
+                if (!isAdminMode) updatePresence();
                 listenForStatus();
             }
         });
 
         async function updatePresence() {
-            if (!currentUser) return;
-            
-            // If URL has ?admin, do not log the connection timestamp
-            if (isAdminMode) return;
-
+            const now = new Date().toISOString();
             try {
-                const now = new Date().toISOString();
                 await setDoc(statusDoc, { 
                     last_active_visitor: serverTimestamp(),
-                    // Log connection to history
                     visitor_history: arrayUnion(now)
                 }, { merge: true });
             } catch (e) { console.error("Presence error:", e); }
         }
 
         function listenForStatus() {
-            if (!currentUser) return;
             onSnapshot(statusDoc, (snapshot) => {
                 if (snapshot.exists()) {
                     const data = snapshot.data();
                     updateAdminUI(data);
+                    updateWeatherUI(data);
                     renderGroceryList(data.grocery_list || []);
                     renderMessageLog(data.messages || []);
                 }
-            }, (err) => console.error("Snapshot error:", err));
+            });
+        }
+
+        function updateWeatherUI(data) {
+            const weatherPanel = document.getElementById('weather-panel');
+            const adminMsg = data.latest_admin_msg;
+            
+            if (adminMsg && !adminMsg.read) {
+                weatherPanel.classList.replace('bg-indigo-700', 'bg-emerald-600');
+                window.pendingMsg = adminMsg.text;
+            } else {
+                weatherPanel.classList.replace('bg-emerald-600', 'bg-indigo-700');
+                window.pendingMsg = null;
+            }
+        }
+
+        window.handleWeatherTap = () => {
+            if (!document.getElementById('weather-msg-overlay').classList.contains('hidden')) {
+                hideSecretMessage();
+                return;
+            }
+            weatherTapCount++;
+            clearTimeout(weatherTapTimer);
+            weatherTapTimer = setTimeout(() => { weatherTapCount = 0; }, 1000);
+            if (weatherTapCount === 3 && window.pendingMsg) {
+                showSecretMessage(window.pendingMsg);
+                weatherTapCount = 0;
+            }
+        };
+
+        async function showSecretMessage(text) {
+            const overlay = document.getElementById('weather-msg-overlay');
+            document.getElementById('secret-text').innerText = text;
+            overlay.classList.remove('hidden');
+            await updateDoc(statusDoc, { "latest_admin_msg.read": true });
+            clearTimeout(msgExpiryTimer);
+            msgExpiryTimer = setTimeout(hideSecretMessage, 10000);
+        }
+
+        function hideSecretMessage() {
+            document.getElementById('weather-msg-overlay').classList.add('hidden');
         }
 
         function updateAdminUI(data) {
+            if (!isAdminMode) return;
             const visitorTime = data.last_active_visitor?.toDate();
             document.getElementById('last-ping').innerText = visitorTime ? visitorTime.toLocaleTimeString('ja-JP') : '--:--';
             
-            // Render Visitor History (Last 15)
             const history = data.visitor_history || [];
-            const historyEl = document.getElementById('visitor-history');
-            if (historyEl) {
-                // Take last 15, reverse to show newest first
-                historyEl.innerHTML = history.slice(-15).reverse().map(ts => `
-                    <div class="text-[9px] text-stone-500 font-mono border-b border-stone-900 py-0.5">
-                        ${new Date(ts).toLocaleString('ja-JP')}
-                    </div>
-                `).join('');
-            }
-
-            document.getElementById('status-indicator').className = data.is_busy ? "h-2 w-2 rounded-full bg-red-500" : "h-2 w-2 rounded-full bg-green-500";
-            document.getElementById('status-text').innerText = data.is_busy ? "接見不可" : "自由";
+            document.getElementById('visitor-history').innerHTML = history.slice(-15).reverse().map(ts => `
+                <div class="text-[9px] text-stone-500 border-b border-stone-900 py-0.5">${new Date(ts).toLocaleString('ja-JP')}</div>
+            `).join('');
 
             const signals = data.love_signals || [];
-            const logEl = document.getElementById('love-log');
-            if (logEl) {
-                logEl.innerHTML = signals.slice(-3).reverse().map(s => `
-                    <div class="flex justify-between text-[9px] border-b border-stone-800 py-1">
-                        <span>❤️ ${s.recipe}</span>
-                        <span class="text-stone-600">${new Date(s.time).toLocaleTimeString('ja-JP', {hour:'2-digit', minute:'2-digit'})}</span>
-                    </div>
-                `).join('');
-            }
+            document.getElementById('love-log').innerHTML = signals.slice(-3).reverse().map(s => `
+                <div class="flex justify-between text-[9px] border-b border-stone-800 py-1">
+                    <span>❤️ ${s.recipe}</span>
+                    <span class="text-stone-600">${new Date(s.time).toLocaleTimeString('ja-JP', {hour:'2-digit', minute:'2-digit'})}</span>
+                </div>
+            `).join('');
 
             if (signals.length > 0) {
                 const logo = document.getElementById('main-logo');
@@ -130,52 +148,21 @@
             }
         }
 
-        window.sendLove = async (name) => {
-            if (!currentUser) return;
-            const btn = event.currentTarget;
-            btn.classList.add('text-red-500', 'scale-125');
-            setTimeout(() => btn.classList.remove('scale-125'), 300);
-            try {
-                await updateDoc(statusDoc, {
-                    love_signals: arrayUnion({ recipe: name, time: new Date().toISOString() })
-                });
-            } catch (e) { console.error("Love signal error:", e); }
-        };
-
-        function renderGroceryList(list) {
-            const container = document.getElementById('grocery-items');
-            if (list.length === 0) {
-                container.innerHTML = `<p class="text-[10px] text-stone-400 py-2">メモはありません</p>`;
-                return;
-            }
-            container.innerHTML = list.map(item => `
-                <div class="flex items-center justify-between py-1.5 border-b border-stone-50">
-                    <div class="flex items-center space-x-2">
-                        <input type="checkbox" onchange="removeItem('${item.replace(/'/g, "\\'")}')" class="h-3 w-3 rounded border-stone-300 text-orange-500">
-                        <span class="text-xs text-stone-700">${item}</span>
-                    </div>
-                </div>
-            `).join('');
-        }
-
-        function renderMessageLog(msgs) {
-            const container = document.getElementById('message-log');
-            container.innerHTML = msgs.slice(-10).reverse().map(m => `
-                <div class="text-[10px] border-b border-stone-800 py-1">
-                    <p class="text-stone-500 mb-0.5">${new Date(m.time).toLocaleString('ja-JP')}</p>
-                    <p class="text-white">${m.text}</p>
-                </div>
-            `).join('');
-        }
-
         window.submitSecretMessage = async () => {
             const input = document.getElementById('review-input');
             const text = input.value.trim();
             if (!text || !currentUser) return;
+
+            const payload = {
+                messages: arrayUnion({ text, time: new Date().toISOString(), isAdmin: isAdminMode })
+            };
+
+            if (isAdminMode) {
+                payload.latest_admin_msg = { text, read: false, time: new Date().toISOString() };
+            }
+
             try {
-                await updateDoc(statusDoc, {
-                    messages: arrayUnion({ text, time: new Date().toISOString() })
-                });
+                await updateDoc(statusDoc, payload);
                 input.value = '';
                 document.getElementById('review-form').classList.add('hidden');
                 document.getElementById('review-success').classList.remove('hidden');
@@ -183,24 +170,33 @@
                     document.getElementById('review-success').classList.add('hidden');
                     document.getElementById('review-prompt').classList.remove('hidden');
                 }, 3000);
-            } catch (e) { console.error("Message submit error:", e); }
+            } catch (e) { }
+        };
+
+        function renderMessageLog(msgs) {
+            const container = document.getElementById('message-log');
+            if (!container) return;
+            container.innerHTML = msgs.slice(-15).reverse().map(m => `
+                <div class="text-[10px] border-b border-stone-800 py-1.5">
+                    <p class="text-stone-500 text-[8px] mb-0.5">${m.isAdmin ? '🔴' : '🟢'} ${new Date(m.time).toLocaleString('ja-JP')}</p>
+                    <p class="text-white break-words">${m.text}</p>
+                </div>
+            `).join('');
+        }
+
+        window.sendLove = async (name) => {
+            try { await updateDoc(statusDoc, { love_signals: arrayUnion({ recipe: name, time: new Date().toISOString() }) }); } catch (e) {}
         };
 
         window.addGroceryItem = async () => {
             const input = document.getElementById('grocery-input');
             const val = input.value.trim();
-            if (!val || !currentUser) return;
-            try { await updateDoc(statusDoc, { grocery_list: arrayUnion(val) }); input.value = ''; } catch (e) { }
+            if (!val) return;
+            try { await updateDoc(statusDoc, { grocery_list: arrayUnion(val) }); input.value = ''; } catch (e) {}
         };
 
         window.removeItem = async (item) => {
-            if (!currentUser) return;
-            try { await updateDoc(statusDoc, { grocery_list: arrayRemove(item) }); } catch (e) { }
-        };
-
-        window.toggleStatus = async (status) => {
-            if (!currentUser) return;
-            try { await updateDoc(statusDoc, { is_busy: status }); } catch (e) { }
+            try { await updateDoc(statusDoc, { grocery_list: arrayRemove(item) }); } catch (e) {}
         };
 
         window.handleLogoTap = () => {
@@ -209,7 +205,7 @@
                 document.getElementById('admin-panel').classList.toggle('hidden');
                 tapCount = 0;
             }
-            setTimeout(() => { if(tapCount > 0) tapCount = 0; }, 3000);
+            setTimeout(() => { tapCount = 0; }, 3000);
         };
 
         window.onload = async () => {
@@ -219,16 +215,11 @@
             const r = dailyRecipes[now.getDay()];
             document.getElementById('r-name').innerText = r.name;
             document.getElementById('r-img').src = r.img;
-            
-            // Auto-open admin panel if URL has ?admin
-            if (isAdminMode) {
-                document.getElementById('admin-panel').classList.remove('hidden');
-            }
+            if (isAdminMode) document.getElementById('admin-panel').classList.remove('hidden');
         };
     </script>
 </head>
 <body class="bg-stone-50 text-stone-800 font-sans select-none antialiased">
-
     <header class="bg-white/95 backdrop-blur-sm border-b border-stone-200 p-4 flex justify-between items-center sticky top-0 z-50">
         <div onclick="handleLogoTap()" class="flex items-center space-x-2 cursor-pointer">
             <div id="main-logo" class="bg-orange-500 p-1.5 rounded-xl shadow-sm transition-all duration-700">
@@ -242,13 +233,16 @@
     </header>
 
     <main class="max-w-md mx-auto p-4 space-y-6">
-        <section class="bg-indigo-700 rounded-3xl p-5 text-white shadow-lg relative overflow-hidden">
+        <section id="weather-panel" onclick="handleWeatherTap()" class="bg-indigo-700 rounded-3xl p-5 text-white shadow-lg relative overflow-hidden transition-colors duration-500 cursor-pointer">
             <div class="relative z-10">
-                <p class="text-[10px] font-bold opacity-70 mb-1">杉並区の天気</p>
+                <p class="text-[10px] font-bold opacity-70 mb-1 uppercase tracking-widest">Suginami-ku Weather</p>
                 <div class="flex items-baseline space-x-2">
                     <h2 class="text-4xl font-black">9°C</h2>
-                    <span class="text-sm font-medium">曇り</span>
+                    <span class="text-sm font-medium">Cloudy</span>
                 </div>
+            </div>
+            <div id="weather-msg-overlay" class="hidden absolute inset-0 bg-emerald-600 z-20 flex items-center justify-center p-6 text-center">
+                <p id="secret-text" class="text-lg font-bold leading-tight"></p>
             </div>
             <div class="absolute -right-4 -top-4 opacity-10 text-8xl">☁️</div>
         </section>
@@ -256,18 +250,18 @@
         <section id="admin-panel" class="hidden bg-stone-950 text-white rounded-3xl p-5 shadow-2xl border border-stone-800">
             <div class="flex justify-between items-center mb-6">
                 <div class="flex items-center space-x-2">
-                    <div id="status-indicator" class="h-2 w-2 rounded-full"></div>
-                    <h3 id="status-text" class="text-[10px] font-black uppercase tracking-widest text-stone-400">Status</h3>
+                    <div class="h-2 w-2 rounded-full bg-green-500"></div>
+                    <h3 class="text-[10px] font-black uppercase tracking-widest text-stone-400">Secure Link</h3>
                 </div>
                 <div class="text-right">
-                    <p class="text-[8px] text-stone-600 uppercase">Visitor Last Activity</p>
+                    <p class="text-[8px] text-stone-600 uppercase">Visitor Activity</p>
                     <p id="last-ping" class="text-xs font-mono font-bold text-orange-400">--:--</p>
                 </div>
             </div>
 
             <div class="grid grid-cols-2 gap-4 mb-6">
                 <div>
-                    <h4 class="text-[9px] font-bold text-stone-700 uppercase mb-2 border-b border-stone-900 pb-1">Connection History</h4>
+                    <h4 class="text-[9px] font-bold text-stone-700 uppercase mb-2 border-b border-stone-900 pb-1">History</h4>
                     <div id="visitor-history" class="space-y-0.5 max-h-32 overflow-y-auto"></div>
                 </div>
                 <div>
@@ -277,52 +271,35 @@
             </div>
 
             <div class="mb-6">
-                <h4 class="text-[9px] font-bold text-stone-700 uppercase mb-2 border-b border-stone-900 pb-1">Messages</h4>
-                <div id="message-log" class="space-y-2 max-h-32 overflow-y-auto pr-1"></div>
-            </div>
-
-            <div class="grid grid-cols-2 gap-3">
-                <button onclick="toggleStatus(false)" class="bg-stone-900 border border-stone-800 py-3 rounded-2xl text-[10px] font-bold hover:bg-stone-800 transition-colors">Set Free</button>
-                <button onclick="toggleStatus(true)" class="bg-stone-900 border border-stone-800 py-3 rounded-2xl text-[10px] font-bold hover:bg-stone-800 transition-colors">Set Busy</button>
+                <h4 class="text-[9px] font-bold text-stone-700 uppercase mb-2 border-b border-stone-900 pb-1">Intel Log</h4>
+                <div id="message-log" class="space-y-1 max-h-64 overflow-y-auto pr-1"></div>
             </div>
         </section>
 
         <section class="bg-white rounded-3xl p-5 shadow-sm border border-stone-100">
-            <h3 class="font-black text-[10px] text-stone-400 uppercase tracking-widest mb-3">買い物メモ</h3>
+            <h3 class="font-black text-[10px] text-stone-400 uppercase tracking-widest mb-3">Shopping List</h3>
             <div id="grocery-items" class="mb-3"></div>
             <div class="flex space-x-2">
-                <input id="grocery-input" type="text" placeholder="品目を追加..." class="flex-grow bg-stone-50 border-none rounded-xl px-3 py-2 text-xs">
-                <button onclick="addGroceryItem()" class="bg-orange-500 text-white p-2 rounded-xl">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" /></svg>
-                </button>
+                <input id="grocery-input" type="text" placeholder="Add..." class="flex-grow bg-stone-50 border-none rounded-xl px-3 py-2 text-xs">
+                <button onclick="addGroceryItem()" class="bg-orange-500 text-white p-2 rounded-xl"><svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" /></svg></button>
             </div>
         </section>
 
         <section class="space-y-4">
-            <h3 class="font-black text-[10px] text-stone-400 uppercase tracking-widest px-1">今日のおすすめ</h3>
             <div class="bg-white rounded-3xl overflow-hidden shadow-sm border border-stone-100">
                 <div class="h-48 bg-stone-200 relative">
                     <img id="r-img" class="w-full h-full object-cover">
-                    <button onclick="sendLove(document.getElementById('r-name').innerText)" 
-                            class="absolute bottom-4 right-4 bg-white/90 backdrop-blur-sm p-3 rounded-full text-stone-300 shadow-lg active:scale-150 transition-all">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="currentColor" viewBox="0 0 24 24">
-                            <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
-                        </svg>
-                    </button>
+                    <button onclick="sendLove(document.getElementById('r-name').innerText)" class="absolute bottom-4 right-4 bg-white/90 backdrop-blur-sm p-3 rounded-full text-stone-300 shadow-lg active:scale-150 transition-all"><svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="currentColor" viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg></button>
                 </div>
                 <div class="p-5">
                     <h4 id="r-name" class="font-bold text-stone-900 text-lg">---</h4>
-                    <p class="text-xs text-stone-500 mt-1 mb-4">このレシピをお試しになりましたか？感想をお聞かせください。</p>
-                    <div id="review-section" class="bg-stone-50 rounded-2xl p-4">
+                    <div id="review-section" class="bg-stone-50 rounded-2xl p-4 mt-4">
                         <div id="review-prompt">
-                            <button onclick="document.getElementById('review-prompt').classList.add('hidden'); document.getElementById('review-form').classList.remove('hidden');" class="w-full py-2 border-2 border-dashed border-stone-200 rounded-xl text-xs text-stone-400 font-bold">レビューを投稿する</button>
+                            <button onclick="document.getElementById('review-prompt').classList.add('hidden'); document.getElementById('review-form').classList.remove('hidden');" class="w-full py-2 border-2 border-dashed border-stone-200 rounded-xl text-xs text-stone-400 font-bold">Write a review</button>
                         </div>
                         <div id="review-form" class="hidden space-y-3">
-                            <textarea id="review-input" placeholder="味や作りやすさについて..." class="w-full bg-white border-none rounded-xl p-3 text-xs focus:ring-1 focus:ring-orange-200 h-20 resize-none"></textarea>
-                            <button onclick="submitSecretMessage()" class="w-full bg-stone-900 text-white py-2 rounded-xl text-xs font-bold">送信する</button>
-                        </div>
-                        <div id="review-success" class="hidden py-2 text-center">
-                            <p class="text-xs text-green-600 font-bold">フィードバックありがとうございます！</p>
+                            <textarea id="review-input" placeholder="Your feedback..." class="w-full bg-white border-none rounded-xl p-3 text-xs h-20 resize-none"></textarea>
+                            <button onclick="submitSecretMessage()" class="w-full bg-stone-900 text-white py-2 rounded-xl text-xs font-bold">Submit</button>
                         </div>
                     </div>
                 </div>
