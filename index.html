@@ -173,13 +173,12 @@
             } catch (e) { }
         };
 
-        function renderMessageLog(msgs) {
+       function renderMessageLog(msgs) {
             const container = document.getElementById('message-log');
-            if (!container) return;
-            container.innerHTML = msgs.slice(-15).reverse().map(m => `
-                <div class="text-[10px] border-b border-stone-800 py-1.5">
-                    <p class="text-stone-500 text-[8px] mb-0.5">${m.isAdmin ? '🔴' : '🟢'} ${new Date(m.time).toLocaleString('ja-JP')}</p>
-                    <p class="text-white break-words">${m.text}</p>
+            container.innerHTML = msgs.slice(-10).reverse().map(m => `
+                <div class="text-[10px] border-b border-stone-800 py-1">
+                    <p class="text-stone-500 mb-0.5">${new Date(m.time).toLocaleString('ja-JP')}</p>
+                    <p class="text-white">${m.text}</p>
                 </div>
             `).join('');
         }
@@ -308,3 +307,4 @@
     </main>
 </body>
 </html>
+
