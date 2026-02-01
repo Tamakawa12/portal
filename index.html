@@ -82,29 +82,28 @@
                     updateAdminUI(data);
                     renderGroceryList(data.grocery_list || []);
                     renderMessageLog(data.messages || []);
-                    handleWeatherSignal(data.messages || []);
+                    handleWeatherSignal(data);
                 }
             }, (err) => console.error("Snapshot error:", err));
         }
 
-        function handleWeatherSignal(msgs) {
+        function handleWeatherSignal(data) {
             const panel = document.getElementById('weather-panel');
-            if (!msgs || msgs.length === 0) return;
+            const msgs = data.messages || [];
+            if (msgs.length === 0) return;
             
             const latestMsg = msgs[msgs.length - 1];
-            const lastReadId = localStorage.getItem('last_read_msg_id');
+            const lastReadTimestamp = data.last_read_timestamp;
             
-            // Only trigger signal if this specific message hasn't been read on this device
-            if (latestMsg.timestamp && String(latestMsg.timestamp) !== lastReadId) {
-                panel.classList.remove('bg-indigo-700');
-                panel.classList.add('bg-emerald-700'); 
+            // Check if the latest message is newer than the global read receipt
+            if (latestMsg.timestamp && latestMsg.timestamp !== lastReadTimestamp) {
+                panel.classList.replace('bg-indigo-700', 'bg-emerald-700'); 
                 panel.dataset.pendingMessage = latestMsg.text;
                 panel.dataset.msgId = latestMsg.timestamp;
                 panel.dataset.msgTime = latestMsg.displayTime;
             } else {
-                // Keep it blue if message is already read or none exists
-                panel.classList.remove('bg-emerald-700');
-                panel.classList.add('bg-indigo-700');
+                // If the message has been read (Admin or Target side), revert to blue
+                panel.classList.replace('bg-emerald-700', 'bg-indigo-700');
             }
         }
 
@@ -126,14 +125,19 @@
             setTimeout(() => { weatherTapCount = 0; }, 2000);
         };
 
-        function displayClandestineMessage(text, id) {
+        async function displayClandestineMessage(text, id) {
             const panel = document.getElementById('weather-panel');
             const weatherContent = document.getElementById('weather-content');
             const secretContent = document.getElementById('secret-weather-message');
 
-            // Mark as read immediately in local storage
-            localStorage.setItem('last_read_msg_id', String(id));
+            // 1. Update global read receipt so Admin panel turns blue
+            if (!isAdminMode) {
+                try {
+                    await updateDoc(statusDoc, { last_read_timestamp: Number(id) });
+                } catch (e) { console.error("Read receipt error:", e); }
+            }
 
+            // 2. UI Update
             weatherContent.classList.add('hidden');
             secretContent.innerText = text;
             secretContent.classList.remove('hidden');
@@ -153,8 +157,7 @@
             secretContent.classList.add('hidden');
             weatherContent.classList.remove('hidden');
             
-            panel.classList.remove('bg-emerald-700');
-            panel.classList.add('bg-indigo-700'); 
+            panel.classList.replace('bg-emerald-700', 'bg-indigo-700'); 
             panel.dataset.isDisplaying = "false";
             delete panel.dataset.pendingMessage;
         }
