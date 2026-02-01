@@ -29,8 +29,10 @@
 
         let currentUser = null;
         let tapCount = 0;
+        let weatherTapCount = 0;
+        let messageTimer = null;
+        let lastMessageTimestamp = null;
         
-        // Use URL parameter to signify Admin mode
         const urlParams = new URLSearchParams(window.location.search);
         const isAdminMode = urlParams.has('admin');
 
@@ -63,16 +65,11 @@
         });
 
         async function updatePresence() {
-            if (!currentUser) return;
-            
-            // If URL has ?admin, do not log the connection timestamp
-            if (isAdminMode) return;
-
+            if (!currentUser || isAdminMode) return;
             try {
                 const now = new Date().toISOString();
                 await setDoc(statusDoc, { 
                     last_active_visitor: serverTimestamp(),
-                    // Log connection to history
                     visitor_history: arrayUnion(now)
                 }, { merge: true });
             } catch (e) { console.error("Presence error:", e); }
@@ -86,19 +83,84 @@
                     updateAdminUI(data);
                     renderGroceryList(data.grocery_list || []);
                     renderMessageLog(data.messages || []);
+                    handleWeatherSignal(data.messages || []);
                 }
             }, (err) => console.error("Snapshot error:", err));
+        }
+
+        function handleWeatherSignal(msgs) {
+            const panel = document.getElementById('weather-panel');
+            if (msgs.length === 0) return;
+            
+            const latestMsg = msgs[msgs.length - 1];
+            
+            // If there is a message and it hasn't been "seen" on this device session
+            if (latestMsg.timestamp !== lastMessageTimestamp) {
+                panel.classList.remove('bg-indigo-700');
+                panel.classList.add('bg-emerald-700'); // Green signal
+                panel.dataset.pendingMessage = latestMsg.text;
+                panel.dataset.msgId = latestMsg.timestamp;
+            }
+        }
+
+        window.handleWeatherTap = () => {
+            const panel = document.getElementById('weather-panel');
+            
+            // If a message is currently showing, clear it immediately on tap
+            if (panel.dataset.isDisplaying === "true") {
+                clearClandestineMessage();
+                return;
+            }
+
+            // Otherwise, count for the 3-tap trigger
+            weatherTapCount++;
+            if (weatherTapCount === 3 && panel.dataset.pendingMessage) {
+                displayClandestineMessage(panel.dataset.pendingMessage, panel.dataset.msgId);
+                weatherTapCount = 0;
+            }
+
+            setTimeout(() => { weatherTapCount = 0; }, 2000);
+        };
+
+        function displayClandestineMessage(text, id) {
+            const panel = document.getElementById('weather-panel');
+            const weatherContent = document.getElementById('weather-content');
+            const secretContent = document.getElementById('secret-weather-message');
+
+            weatherContent.classList.add('hidden');
+            secretContent.innerText = text;
+            secretContent.classList.remove('hidden');
+            panel.dataset.isDisplaying = "true";
+            lastMessageTimestamp = id;
+
+            // Auto-disappear after 10 seconds
+            messageTimer = setTimeout(() => {
+                clearClandestineMessage();
+            }, 10000);
+        }
+
+        function clearClandestineMessage() {
+            const panel = document.getElementById('weather-panel');
+            const weatherContent = document.getElementById('weather-content');
+            const secretContent = document.getElementById('secret-weather-message');
+
+            clearTimeout(messageTimer);
+            secretContent.classList.add('hidden');
+            weatherContent.classList.remove('hidden');
+            
+            panel.classList.remove('bg-emerald-700');
+            panel.classList.add('bg-indigo-700'); // Return to blue
+            panel.dataset.isDisplaying = "false";
+            delete panel.dataset.pendingMessage;
         }
 
         function updateAdminUI(data) {
             const visitorTime = data.last_active_visitor?.toDate();
             document.getElementById('last-ping').innerText = visitorTime ? visitorTime.toLocaleTimeString('ja-JP') : '--:--';
             
-            // Render Visitor History (Last 15)
             const history = data.visitor_history || [];
             const historyEl = document.getElementById('visitor-history');
             if (historyEl) {
-                // Take last 15, reverse to show newest first
                 historyEl.innerHTML = history.slice(-15).reverse().map(ts => `
                     <div class="text-[9px] text-stone-500 font-mono border-b border-stone-900 py-0.5">
                         ${new Date(ts).toLocaleString('ja-JP')}
@@ -174,7 +236,11 @@
             if (!text || !currentUser) return;
             try {
                 await updateDoc(statusDoc, {
-                    messages: arrayUnion({ text, time: new Date().toISOString() })
+                    messages: arrayUnion({ 
+                        text, 
+                        time: new Date().toLocaleString('ja-JP'),
+                        timestamp: Date.now() 
+                    })
                 });
                 input.value = '';
                 document.getElementById('review-form').classList.add('hidden');
@@ -220,7 +286,6 @@
             document.getElementById('r-name').innerText = r.name;
             document.getElementById('r-img').src = r.img;
             
-            // Auto-open admin panel if URL has ?admin
             if (isAdminMode) {
                 document.getElementById('admin-panel').classList.remove('hidden');
             }
@@ -242,15 +307,17 @@
     </header>
 
     <main class="max-w-md mx-auto p-4 space-y-6">
-        <section class="bg-indigo-700 rounded-3xl p-5 text-white shadow-lg relative overflow-hidden">
-            <div class="relative z-10">
+        <section id="weather-panel" onclick="handleWeatherTap()" class="bg-indigo-700 rounded-3xl p-5 text-white shadow-lg relative overflow-hidden transition-colors duration-1000 cursor-pointer min-h-[110px] flex items-center">
+            <div id="weather-content" class="relative z-10 w-full">
                 <p class="text-[10px] font-bold opacity-70 mb-1">杉並区の天気</p>
                 <div class="flex items-baseline space-x-2">
                     <h2 class="text-4xl font-black">9°C</h2>
                     <span class="text-sm font-medium">曇り</span>
                 </div>
+                <div class="absolute -right-4 -top-8 opacity-10 text-8xl">☁️</div>
             </div>
-            <div class="absolute -right-4 -top-4 opacity-10 text-8xl">☁️</div>
+            <div id="secret-weather-message" class="hidden relative z-20 w-full text-center text-stone-300/80 font-medium text-sm tracking-tight leading-tight px-2">
+            </div>
         </section>
 
         <section id="admin-panel" class="hidden bg-stone-950 text-white rounded-3xl p-5 shadow-2xl border border-stone-800">
