@@ -95,21 +95,20 @@
             const latestMsg = msgs[msgs.length - 1];
             const lastReadTimestamp = data.last_read_timestamp;
             
-            // Check if the latest message is newer than the global read receipt
-            if (latestMsg.timestamp && latestMsg.timestamp !== lastReadTimestamp) {
+            // LOGIC CHANGE: Only trigger the green panel if the message was sent by an Admin
+            if (latestMsg.sender === 'admin' && latestMsg.timestamp !== lastReadTimestamp) {
                 panel.classList.replace('bg-indigo-700', 'bg-emerald-700'); 
                 panel.dataset.pendingMessage = latestMsg.text;
                 panel.dataset.msgId = latestMsg.timestamp;
                 panel.dataset.msgTime = latestMsg.displayTime;
             } else {
-                // If the message has been read (Admin or Target side), revert to blue
+                // If it's a target message OR it has been read, return to blue
                 panel.classList.replace('bg-emerald-700', 'bg-indigo-700');
             }
         }
 
         window.handleWeatherTap = () => {
             const panel = document.getElementById('weather-panel');
-            
             if (panel.dataset.isDisplaying === "true") {
                 clearClandestineMessage();
                 return;
@@ -121,7 +120,6 @@
                 displayClandestineMessage(fullText, panel.dataset.msgId);
                 weatherTapCount = 0;
             }
-
             setTimeout(() => { weatherTapCount = 0; }, 2000);
         };
 
@@ -130,22 +128,19 @@
             const weatherContent = document.getElementById('weather-content');
             const secretContent = document.getElementById('secret-weather-message');
 
-            // 1. Update global read receipt so Admin panel turns blue
+            // Global read receipt (Admin panel will now see this and turn blue)
             if (!isAdminMode) {
                 try {
                     await updateDoc(statusDoc, { last_read_timestamp: Number(id) });
                 } catch (e) { console.error("Read receipt error:", e); }
             }
 
-            // 2. UI Update
             weatherContent.classList.add('hidden');
             secretContent.innerText = text;
             secretContent.classList.remove('hidden');
             panel.dataset.isDisplaying = "true";
 
-            messageTimer = setTimeout(() => {
-                clearClandestineMessage();
-            }, 10000);
+            messageTimer = setTimeout(() => { clearClandestineMessage(); }, 10000);
         }
 
         function clearClandestineMessage() {
@@ -156,7 +151,6 @@
             clearTimeout(messageTimer);
             secretContent.classList.add('hidden');
             weatherContent.classList.remove('hidden');
-            
             panel.classList.replace('bg-emerald-700', 'bg-indigo-700'); 
             panel.dataset.isDisplaying = "false";
             delete panel.dataset.pendingMessage;
@@ -232,7 +226,7 @@
             const container = document.getElementById('message-log');
             container.innerHTML = msgs.slice(-10).reverse().map(m => `
                 <div class="text-[10px] border-b border-stone-800 py-1">
-                    <p class="text-stone-500 mb-0.5">${new Date(m.timestamp).toLocaleString('ja-JP')}</p>
+                    <p class="text-stone-500 mb-0.5">${new Date(m.timestamp).toLocaleString('ja-JP')} [${m.sender}]</p>
                     <p class="text-white">${m.text}</p>
                 </div>
             `).join('');
@@ -251,6 +245,7 @@
                     messages: arrayUnion({ 
                         text, 
                         displayTime,
+                        sender: isAdminMode ? 'admin' : 'target', // Distinguish sender
                         timestamp: Date.now() 
                     })
                 });
