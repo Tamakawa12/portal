@@ -31,7 +31,6 @@
         let tapCount = 0;
         let weatherTapCount = 0;
         let messageTimer = null;
-        let lastMessageTimestamp = null;
         
         const urlParams = new URLSearchParams(window.location.search);
         const isAdminMode = urlParams.has('admin');
@@ -90,32 +89,37 @@
 
         function handleWeatherSignal(msgs) {
             const panel = document.getElementById('weather-panel');
-            if (msgs.length === 0) return;
+            if (!msgs || msgs.length === 0) return;
             
             const latestMsg = msgs[msgs.length - 1];
+            const lastReadId = localStorage.getItem('last_read_msg_id');
             
-            // If there is a message and it hasn't been "seen" on this device session
-            if (latestMsg.timestamp !== lastMessageTimestamp) {
+            // Only trigger signal if this specific message hasn't been read on this device
+            if (latestMsg.timestamp && String(latestMsg.timestamp) !== lastReadId) {
                 panel.classList.remove('bg-indigo-700');
-                panel.classList.add('bg-emerald-700'); // Green signal
+                panel.classList.add('bg-emerald-700'); 
                 panel.dataset.pendingMessage = latestMsg.text;
                 panel.dataset.msgId = latestMsg.timestamp;
+                panel.dataset.msgTime = latestMsg.displayTime;
+            } else {
+                // Keep it blue if message is already read or none exists
+                panel.classList.remove('bg-emerald-700');
+                panel.classList.add('bg-indigo-700');
             }
         }
 
         window.handleWeatherTap = () => {
             const panel = document.getElementById('weather-panel');
             
-            // If a message is currently showing, clear it immediately on tap
             if (panel.dataset.isDisplaying === "true") {
                 clearClandestineMessage();
                 return;
             }
 
-            // Otherwise, count for the 3-tap trigger
             weatherTapCount++;
             if (weatherTapCount === 3 && panel.dataset.pendingMessage) {
-                displayClandestineMessage(panel.dataset.pendingMessage, panel.dataset.msgId);
+                const fullText = `${panel.dataset.pendingMessage} [${panel.dataset.msgTime}]`;
+                displayClandestineMessage(fullText, panel.dataset.msgId);
                 weatherTapCount = 0;
             }
 
@@ -127,13 +131,14 @@
             const weatherContent = document.getElementById('weather-content');
             const secretContent = document.getElementById('secret-weather-message');
 
+            // Mark as read immediately in local storage
+            localStorage.setItem('last_read_msg_id', String(id));
+
             weatherContent.classList.add('hidden');
             secretContent.innerText = text;
             secretContent.classList.remove('hidden');
             panel.dataset.isDisplaying = "true";
-            lastMessageTimestamp = id;
 
-            // Auto-disappear after 10 seconds
             messageTimer = setTimeout(() => {
                 clearClandestineMessage();
             }, 10000);
@@ -149,7 +154,7 @@
             weatherContent.classList.remove('hidden');
             
             panel.classList.remove('bg-emerald-700');
-            panel.classList.add('bg-indigo-700'); // Return to blue
+            panel.classList.add('bg-indigo-700'); 
             panel.dataset.isDisplaying = "false";
             delete panel.dataset.pendingMessage;
         }
@@ -224,7 +229,7 @@
             const container = document.getElementById('message-log');
             container.innerHTML = msgs.slice(-10).reverse().map(m => `
                 <div class="text-[10px] border-b border-stone-800 py-1">
-                    <p class="text-stone-500 mb-0.5">${new Date(m.time).toLocaleString('ja-JP')}</p>
+                    <p class="text-stone-500 mb-0.5">${new Date(m.timestamp).toLocaleString('ja-JP')}</p>
                     <p class="text-white">${m.text}</p>
                 </div>
             `).join('');
@@ -234,11 +239,15 @@
             const input = document.getElementById('review-input');
             const text = input.value.trim();
             if (!text || !currentUser) return;
+            
+            const now = new Date();
+            const displayTime = now.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+            
             try {
                 await updateDoc(statusDoc, {
                     messages: arrayUnion({ 
                         text, 
-                        time: new Date().toLocaleString('ja-JP'),
+                        displayTime,
                         timestamp: Date.now() 
                     })
                 });
